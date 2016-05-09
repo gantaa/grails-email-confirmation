@@ -214,7 +214,8 @@ class EmailConfirmationService implements ApplicationContextAware {
 	    eventTopic = eventTopic ? "${eventTopic}.${callbackType}" : callbackType
 	    if (!eventNamespace) {
 	        // Assume its an old event - purely for legacy. 'app' namespace should not be used
-	        result = event(topic:eventTopic, namespace:EVENT_NAMESPACE, data:args, params:[fork:false]).value
+	        // result = event(topic:eventTopic, namespace:EVENT_NAMESPACE, data:args, params:[fork:false]).value
+	        result = notify( "${eventTopic}.${EVENT_NAMESPACE}", args )
         
             if (!result && expectsResult) {
     		    // Legacy only
@@ -225,7 +226,8 @@ class EmailConfirmationService implements ApplicationContextAware {
     	    }   
 
         } else {
-	        result = event(namespace:eventNamespace, topic:eventTopic, data:args, fork:false).value
+	        //result = event(namespace:eventNamespace, topic:eventTopic, data:args, fork:false).value
+	        result = notify("${topic}.${eventNamespace}", args)
 
             if (!result && expectsResult) {
                 if (log.warnEnabled) {
