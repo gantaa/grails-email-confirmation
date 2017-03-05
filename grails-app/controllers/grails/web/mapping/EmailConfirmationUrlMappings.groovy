@@ -1,3 +1,4 @@
+package grails.web.mapping
 /*
  * Copyright 2004-2005 the original author or authors.
  *
@@ -29,5 +30,8 @@ class EmailConfirmationUrlMappings {
                 controller = "emailConfirmationTestTools"
             }
         }
+		
+		
+        
     }	
 }

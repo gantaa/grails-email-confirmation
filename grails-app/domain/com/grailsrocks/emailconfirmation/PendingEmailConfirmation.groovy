@@ -25,7 +25,7 @@ class PendingEmailConfirmation implements Serializable {
 	Date timestamp = new Date()
 
     static mapping = {
-	id generator: 'sequence'
+	//id generator: 'identity'
         confirmationToken index:'emailconf_token_Idx'
         timestamp index:'emailconf_timestamp_Idx'
     }

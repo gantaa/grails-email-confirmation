@@ -15,17 +15,15 @@
  */
 package com.grailsrocks.emailconfirmation
  
-import java.util.concurrent.ConcurrentHashMap
-
-import org.springframework.transaction.annotation.Transactional
-import org.springframework.context.ApplicationContextAware
-import org.springframework.context.ApplicationContext
-import com.grailsrocks.emailconfirmation.*
-
 import grails.util.Environment
+import reactor.bus.Event;
 
 import java.rmi.server.UID
 import java.security.*
+
+import org.springframework.context.ApplicationContext
+import org.springframework.context.ApplicationContextAware
+import org.springframework.transaction.annotation.Transactional
 
 class EmailConfirmationService implements ApplicationContextAware {
 
@@ -38,6 +36,7 @@ class EmailConfirmationService implements ApplicationContextAware {
 	static EVENT_TYPE_TIMEOUT = 'timeout'
 	
 	def mailService
+	def resultEvent = null;
 
 	boolean transactional = true
 
@@ -58,9 +57,18 @@ class EmailConfirmationService implements ApplicationContextAware {
 	
 	def grailsApplication
 	
+	public java.lang.Object getResultEvent() {
+		return resultEvent;
+	}
+
+	public void setResultEvent(java.lang.Object resultEvent) {
+		this.resultEvent = resultEvent;
+	}
+
 	def makeURL(token) {
-	    def grailsApplication = ApplicationHolder.application
-		def serverURL = grailsApplication.config.grails.serverURL ?: 'http://localhost:8080/'+grailsApplication.metadata.'app.name'
+	    //def grailsApplication = ApplicationHolder.application
+		//def serverURL = grailsApplication.config.grails.serverURL ?: 'http://localhost:8080/'+grailsApplication.metadata.'app.name'
+		def serverURL = grailsApplication.config.grails.serverURL ?: 'http://localhost:8080/'+grailsApplication.config.getProperty("info.app.name");
         // @todo we should reverse-map this but currently you'd have to hack the plugin anyway so no point...
     	"${serverURL}/confirm/${token.encodeAsURL()}"
 	}
@@ -197,6 +205,9 @@ class EmailConfirmationService implements ApplicationContextAware {
 	    
         def eventNamespace
         def eventTopic
+		//Inicializamos el resultado del evento
+		resultEvent = null;
+		
         if (!appEventPath) {
             appEventPath = ''
         }
@@ -209,31 +220,27 @@ class EmailConfirmationService implements ApplicationContextAware {
         } else {
             eventTopic = appEventPath
         }
-	    def result
+	    
 	    // If app-supplied callback topic, use that plus callback type, else just our declared callback types
 	    eventTopic = eventTopic ? "${eventTopic}.${callbackType}" : callbackType
-	    if (!eventNamespace) {
-	        // Assume its an old event - purely for legacy. 'app' namespace should not be used
-	        result = event(topic:eventTopic, namespace:EVENT_NAMESPACE, data:args, params:[fork:false]).value
-        
-            if (!result && expectsResult) {
-    		    // Legacy only
-    		    if (log.warnEnabled) {
-    		        log.warn "No event listener for namespace:$EVENT_NAMESPACE and topic:'$eventTopic'. Calling DEPRECATED legacy event handler, change your code to use platform events instead"
-    	        }
-    	        result = legacyHandler(args)	
-    	    }   
+		
+		def result
+		//Es necesario pasar el selector a string. Si no, no funciona
+		String selector = eventTopic + "." + eventNamespace
+		sendAndReceive (selector, args, {Event<String> s -> this.setResultEvent(s.getData())
+		})
+		//Esperamos a que obtenga el resultado
+		Thread.sleep(2000);
 
+        if (!resultEvent && expectsResult) {
+            if (log.warnEnabled) {
+                log.warn "No event handler was found for namespace ${eventNamespace} and topic ${eventTopic} or the result was null, confirmation event was effectively lost"
+            }
+            result = legacyHandler(args)    
         } else {
-	        result = event(namespace:eventNamespace, topic:eventTopic, data:args, fork:false).value
-
-            if (!result && expectsResult) {
-                if (log.warnEnabled) {
-                    log.warn "No event handler was found for namespace ${eventNamespace} and topic ${eventTopic} or the result was null, confirmation event was effectively lost"
-                }
-                result = legacyHandler(args)    
-            }   
-        } 
+			result = resultEvent;
+        }
+        
 
 	    return result
 	}
@@ -246,7 +253,7 @@ class EmailConfirmationService implements ApplicationContextAware {
 		if (log.traceEnabled) {
             log.trace("checkConfirmation looking for confirmation token: $confirmationToken")
         }
-
+		
 		def conf
         if (confirmationToken) {
             conf = PendingEmailConfirmation.findByConfirmationToken(confirmationToken)
@@ -257,12 +264,15 @@ class EmailConfirmationService implements ApplicationContextAware {
 
 		// 100% double check that the token in the found object matches exactly. Some lame databases
 		// are case insensitive for searches, which reduces the possible token space
+		
+		Map args;
 		if (conf && (conf.confirmationToken == confirmationToken)) {
 			if (log.debugEnabled) {
 				log.debug( "Notifying application of valid email confirmation for user token ${conf.userToken}, email ${conf.emailAddress}")
 			}
 			// Tell application it's ok
-			def result = fireEvent(EVENT_TYPE_CONFIRMED, conf.confirmationEvent, [email:conf.emailAddress, id:conf.userToken], {
+			args = [email:conf.emailAddress, id:conf.userToken]
+			def result = fireEvent(EVENT_TYPE_CONFIRMED, conf.confirmationEvent, args, {
                 onConfirmation?.clone().call(conf.emailAddress, conf.userToken)					    
 			})
 			
@@ -272,7 +282,8 @@ class EmailConfirmationService implements ApplicationContextAware {
 			if (log.traceEnabled) {
 			    log.trace("checkConfirmation did not find confirmation token: $confirmationToken")
 		    }
-			def result = fireEvent(EVENT_TYPE_INVALID, null, [token:confirmationToken], {
+			args = [token:confirmationToken]
+			def result = fireEvent(EVENT_TYPE_INVALID, null, args , {
                 onInvalid?.clone().call(confirmationToken)					    
 			})
 			
